@@ -1,4 +1,4 @@
-# BlocStage API — Decentralized ticketing and event platform (Server)
+# BlocStage API: Decentralized ticketing and event platform
 
 BlocStage API provides a modern server backend for decentralized ticketing, event management and on-chain rewards on Stellar. It blends battle-tested patterns with onchain primitives to make building and running ticketing platforms fast, secure, and scalable.
 
@@ -168,3 +168,4 @@ All contributions are welcome. A few tips:
 - Use integration tests where side-effects (DB, external APIs) are required.
 
 ---
+

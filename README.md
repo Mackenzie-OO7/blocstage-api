@@ -3,27 +3,25 @@
 BlocStage API provides a modern server backend for decentralized ticketing, event management and on-chain rewards on Stellar. It blends battle-tested patterns with onchain primitives to make building and running ticketing platforms fast, secure, and scalable.
 
 **Key highlights**:
-- Built in Rust for safety, concurrency, and performance
+- Built in Rust
 - Actix-web powers a fast, resilient HTTP API surface
 - Soroban/Horizon for wallet, USDC onboarding and sponsored payments
 - Postgres via sqlx for robust, typed DB access and migrations
 - Redis for caching, sessions, rate limiting and analytics
-- Shuttle-ready for modern cloud deployment and secrets management
-- Clean layered architecture (controllers → services → models) that is easy to extend
+- Shuttle-ready for cloud deployment
+- Clean layered, modular architecture (controllers → services → models) that is easy to extend
 
 ---
 
 ## Table of contents
-- [BlocStage API — Decentralized ticketing and event platform (Server)](#blocstage-api--decentralized-ticketing-and-event-platform-server)
-  - [Table of contents](#table-of-contents)
-  - [Goals \& overview](#goals--overview)
+  - [Goals & overview](#goals--overview)
   - [Architecture](#architecture)
-  - [Tech Stack — where it lives \& what it does](#tech-stack--where-it-lives--what-it-does)
+  - [Tech Stack](#tech-stack)
   - [Quick start](#quick-start)
     - [**Requirements**](#requirements)
     - [**Environment**](#environment)
     - [**Run locally**](#run-locally)
-  - [Database \& migrations](#database--migrations)
+  - [Database & migrations](#database--migrations)
   - [Tests](#tests)
   - [Deployment notes (Shuttle)](#deployment-notes-shuttle)
   - [Contributing](#contributing)
@@ -67,16 +65,16 @@ The server is intentionally modular: lightweight controllers handle HTTP concern
 
 ---
 
-## Tech Stack — where it lives & what it does
+## Tech Stack
 
-- Rust — all core code (controllers, services, models and tests) is implemented in `src/`.
-- Actix-web — HTTP server, routing and middleware live in `src/main.rs` and `src/controllers/` (handles endpoints, CORS, error handling, and request parsing).
-- SQLx + Postgres — DB access implemented in `src/models/` and `src/services/`, schema managed by `migrations/` and sqlx provides typed queries and pooling.
-- Shuttle — deployment and runtime configuration via `Shuttle.toml` and the `#[shuttle_runtime::main]` entrypoint in `src/main.rs` (secrets injection and hosting).
-- Redis — caching, session management, rate limiting and analytics code is in `src/services/redis_service.rs` and referenced across services.
-- Stellar / Soroban — on-chain orchestration (trustlines, USDC ops, transaction submission, sponsored payments) implemented in `src/services/stellar.rs`.
-- SendGrid + Storage (Supabase-compatible) — email templates and provider implementations in `src/services/email/` and storage upload/signed URLs in `src/services/storage.rs` (ticket PDFs).
-- Tracing + OpenTelemetry + Prometheus — observability & metrics integration wired across `src/` using tracing, tracing-opentelemetry and prometheus crates.
+- Rust: all core code (controllers, services, models and tests) is implemented in `src/`.
+- Actix-web: HTTP server, routing and middleware live in `src/main.rs` and `src/controllers/` (handles endpoints, CORS, error handling, and request parsing).
+- SQLx + Postgres: DB access implemented in `src/models/` and `src/services/`, schema managed by `migrations/` and sqlx provides typed queries and pooling.
+- Shuttle: deployment and runtime configuration via `Shuttle.toml` and the `#[shuttle_runtime::main]` entrypoint in `src/main.rs` (secrets injection and hosting).
+- Redis: caching, session management, rate limiting and analytics code is in `src/services/redis_service.rs` and referenced across services.
+- Stellar / Soroban: on-chain orchestration (trustlines, USDC ops, transaction submission, sponsored payments) implemented in `src/services/stellar.rs`.
+- SendGrid + Storage (Supabase-compatible): email templates and provider implementations in `src/services/email/` and storage upload/signed URLs in `src/services/storage.rs` (ticket PDFs).
+- Tracing + OpenTelemetry + Prometheus: observability & metrics integration wired across `src/` using tracing, tracing-opentelemetry and prometheus crates.
 
 ---
 
@@ -168,4 +166,5 @@ All contributions are welcome. A few tips:
 - Use integration tests where side-effects (DB, external APIs) are required.
 
 ---
+
 

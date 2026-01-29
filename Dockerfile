@@ -17,6 +17,7 @@ COPY . .
 
 # Build the application
 # Touch main.rs to force rebuild of the application code
+ENV SQLX_OFFLINE=true
 RUN touch src/main.rs && cargo build --release
 
 # Runtime stage

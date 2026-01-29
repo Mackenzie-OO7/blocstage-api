@@ -162,7 +162,7 @@ pub async fn update_profile(
         UPDATE users 
         SET username = $1, first_name = $2, last_name = $3, profile_picture_url = $4, updated_at = NOW()
         WHERE id = $5
-        RETURNING *
+        RETURNING id, username, email, first_name, last_name, password_hash, stellar_public_key, stellar_secret_key, stellar_secret_key_encrypted, created_at, updated_at, email_verified, verification_token, reset_token, reset_token_expires, status, role, profile_picture_url, google_id, verification_token_expires
         "#,
         new_username,
         new_first_name,
@@ -254,7 +254,13 @@ pub async fn update_password(
 ) -> impl Responder {
     match User::find_by_id(&pool, user.id).await {
         Ok(Some(user_profile)) => {
-            match bcrypt::verify(&password_data.current_password, &user_profile.password_hash) {
+            let Some(existing_hash) = &user_profile.password_hash else {
+                return HttpResponse::BadRequest().json(ErrorResponse {
+                    message: "User uses Google login (no password set)".to_string(),
+                });
+            };
+
+            match bcrypt::verify(&password_data.current_password, existing_hash) {
                 Ok(true) => {
                     if password_data.new_password.len() < 8 {
                         return HttpResponse::BadRequest().json(ErrorResponse {
@@ -270,7 +276,7 @@ pub async fn update_password(
                                 UPDATE users
                                 SET password_hash = $1, updated_at = NOW()
                                 WHERE id = $2
-                                RETURNING *
+                                RETURNING id, username, email, first_name, last_name, password_hash, stellar_public_key, stellar_secret_key, stellar_secret_key_encrypted, created_at, updated_at, email_verified, verification_token, reset_token, reset_token_expires, status, role, profile_picture_url, google_id, verification_token_expires
                                 "#,
                                 new_hash,
                                 user.id

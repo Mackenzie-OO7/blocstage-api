@@ -127,17 +127,11 @@ impl EmailService {
         self.provider.provider_name() == "SendGrid"
     }
 
-    pub async fn send_verification_email(&self, to_email: &str, first_name: &str, token: &str) -> Result<()> {
-        let verification_url = format!(
-            "{}/verify-email?token={}",
-            std::env::var("APP_URL").unwrap_or_else(|_| "http://localhost:3000".to_string()),
-            token
-        );
-
+    pub async fn send_verification_email(&self, to_email: &str, first_name: &str, code: &str) -> Result<()> {
         if self.should_use_templates() {
             let mut template_data = HashMap::new();
             template_data.insert("first_name".to_string(), first_name.to_string());
-            template_data.insert("verification_url".to_string(), verification_url);
+            template_data.insert("verification_code".to_string(), code.to_string());
             template_data.insert("app_name".to_string(), "BlocStage".to_string());
             template_data.insert("app_url".to_string(), std::env::var("APP_URL").unwrap_or_else(|_| "http://localhost:3000".to_string()));
 
@@ -155,13 +149,13 @@ impl EmailService {
         } else {
             let mut context = HashMap::new();
             context.insert("first_name", first_name);
-            context.insert("verification_url", &verification_url);
+            context.insert("verification_code", code);
             context.insert("app_name", "BlocStage");
 
             let html_body = self.template_renderer.render("email_verification", &context)?;
             let text_body = format!(
-                "Hi {},\n\nPlease verify your email by clicking this link: {}\n\nThanks,\nBlocStage Team",
-                first_name, verification_url
+                "Hi {},\n\nYour verification code is: {}\n\nThis code expires in 15 minutes.\n\nThanks,\nBlocStage Team",
+                first_name, code
             );
 
             let request = EmailRequest {

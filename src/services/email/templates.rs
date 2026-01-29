@@ -103,8 +103,7 @@ const EMAIL_VERIFICATION_TEMPLATE: &str = r#"
         .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; text-align: center; border-radius: 10px 10px 0 0; }
         .content { background: white; padding: 30px; border: 1px solid #ddd; }
         .footer { background: #f8f9fa; padding: 20px; text-align: center; font-size: 12px; color: #666; border-radius: 0 0 10px 10px; }
-        .button { display: inline-block; padding: 12px 24px; background: #667eea; color: white; text-decoration: none; border-radius: 5px; font-weight: bold; margin: 20px 0; }
-        .button:hover { background: #5a6fd8; }
+        .code { display: inline-block; padding: 15px 30px; background: #eaebf0; font-size: 24px; letter-spacing: 5px; color: #333; font-weight: bold; border-radius: 5px; margin: 20px 0; border: 1px solid #ddd; }
     </style>
 </head>
 <body>
@@ -115,14 +114,13 @@ const EMAIL_VERIFICATION_TEMPLATE: &str = r#"
         </div>
         <div class="content">
             <h2>Welcome, {{first_name}}! 🎉</h2>
-            <p>Thank you for joining {{app_name}}! To complete your registration and start exploring amazing events, please verify your email address.</p>
+            <p>Thank you for signing up for {{app_name}}. Please use the verification code below to complete your registration:</p>
             
             <div style="text-align: center;">
-                <a href="{{verification_url}}" class="button">Verify Email Address</a>
+                <div class="code">{{verification_code}}</div>
             </div>
             
-            <p>Or copy and paste this link into your browser:</p>
-            <p style="background: #f8f9fa; padding: 10px; border-radius: 5px; word-break: break-all;">{{verification_url}}</p>
+            <p>This code will expire in 15 minutes.</p>
             
             <p><strong>Why verify your email?</strong></p>
             <ul>

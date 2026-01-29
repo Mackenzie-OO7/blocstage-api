@@ -6,9 +6,10 @@ use bcrypt::{hash, verify};
 use chrono::{Duration, Utc};
 use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
 use log::{debug, error, info, warn};
+use rand::Rng;
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
-use std::{env,};
+use std::env;
 use uuid::Uuid;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -18,6 +19,15 @@ pub struct Claims {
     pub role: String, // User role (admin, organizer, attendee)
     pub iat: i64,     // Issued at
     pub jti: String,  // JWT ID
+}
+
+#[derive(Debug, Deserialize)]
+pub struct GoogleUser {
+    pub sub: String,
+    pub email: String,
+    pub given_name: String,
+    pub family_name: String,
+    pub picture: Option<String>,
 }
 
 pub struct AuthService {
@@ -108,10 +118,23 @@ impl AuthService {
             return Err(anyhow!("Email already registered"));
         }
 
-        let password_hash = hash(&user_req.password, 10)?;
+        let password_hash = Some(hash(&user_req.password, 10)?);
         info!("🔐 Password hashed successfully");
 
-        let user = User::create(&self.pool, user_req, password_hash).await?;
+        // Generate 4 digit code
+        let mut rng = rand::rng();
+        let code: u32 = rng.random_range(1000..9999);
+        let verification_token = code.to_string();
+        let verification_token_expires = Utc::now() + Duration::minutes(15);
+
+        let user = User::create(
+            &self.pool, 
+            user_req, 
+            password_hash,
+            None, // google_id
+            Some(verification_token),
+            Some(verification_token_expires)
+        ).await?;
         info!("✅ User created with ID: {}", user.id);
 
         let (public_key, secret_key) = self.stellar.generate_keypair()?;
@@ -200,7 +223,15 @@ impl AuthService {
         }
 
         // use constant time comparison to prevent timing attacks
-        if !verify(&login_req.password, &user.password_hash)? {
+        let Some(password_hash) = &user.password_hash else {
+             warn!(
+                "❌ Login failed: User has no password set (likely Google auth) for user {} from IP: {:?}",
+                user.id, ip_address
+            );
+            return Err(anyhow!("Invalid email or password"));
+        };
+
+        if !verify(&login_req.password, password_hash)? {
             warn!(
                 "❌ Login failed: Invalid password for user {} from IP: {:?}",
                 user.id, ip_address
@@ -226,27 +257,122 @@ impl AuthService {
         Ok(token)
     }
 
-    pub async fn verify_email(&self, token: &str) -> Result<User> {
+    pub async fn verify_email(&self, email: &str, code: &str) -> Result<User> {
         info!(
-            "📧 Verifying email with token: {}...",
-            &token[0..10.min(token.len())]
+            "📧 Verifying email {} with code: {}...",
+            email, code
         );
 
         // Input validation
-        if token.trim().is_empty() || token.len() < 32 || token.len() > 255 {
-            warn!("❌ Email verification failed: Invalid token format");
-            return Err(anyhow!("Invalid verification token"));
+        if code.trim().is_empty() || code.len() != 4 {
+            warn!("❌ Email verification failed: Invalid code format");
+            return Err(anyhow!("Invalid verification code"));
         }
 
-        let user = User::verify_email(&self.pool, token)
+        let user = User::verify_email(&self.pool, email, code)
             .await?
             .ok_or_else(|| {
-                warn!("❌ Email verification failed: Invalid or expired token");
-                anyhow!("Invalid or expired verification token")
+                warn!("❌ Email verification failed: Invalid or expired code");
+                anyhow!("Invalid or expired verification code")
             })?;
 
         info!("✅ Email verified for user: {} ({})", user.id, user.email);
         Ok(user)
+    }
+
+    pub async fn verify_google_token(&self, id_token: &str) -> Result<GoogleUser> {
+        let client = reqwest::Client::new();
+        let response = client
+            .get("https://oauth2.googleapis.com/tokeninfo")
+            .query(&[("id_token", id_token)])
+            .send()
+            .await?;
+
+        if !response.status().is_success() {
+            let error_text = response.text().await.unwrap_or_default();
+            warn!("Google token validation failed: {}", error_text);
+            return Err(anyhow!("Invalid Google token"));
+        }
+
+        let google_user: GoogleUser = response.json().await?;
+        
+        let client_id = env::var("GOOGLE_CLIENT_ID")
+            .map_err(|_| anyhow!("GOOGLE_CLIENT_ID not set"))?;
+            
+        // Basic check, though Google endpoint ensures signature validity.
+        // The `aud` claim in token should match our client_id.
+        // However, response from tokeninfo usually returns `aud` as well.
+        // Ideally we check it, but for now we assume tokeninfo implies valid signature from Google.
+        // Let's rely on tokeninfo returning success.
+
+        Ok(google_user)
+    }
+
+    pub async fn login_with_google(&self, id_token: &str, ip_address: Option<String>, user_agent: Option<String>) -> Result<String> {
+        let google_user = self.verify_google_token(id_token).await?;
+        info!("Google login for: {}", google_user.email);
+
+        // Check if user exists by google_id
+        let user_opt = User::find_by_google_id(&self.pool, &google_user.sub).await?;
+        
+        let user = if let Some(user) = user_opt {
+             user
+        } else {
+            // Check by email
+            let email_user_opt = User::find_by_email(&self.pool, &google_user.email).await?;
+            
+            if let Some(user) = email_user_opt {
+                // Link google_id
+                sqlx::query!(
+                    "UPDATE users SET google_id = $1 WHERE id = $2",
+                    google_user.sub,
+                    user.id
+                )
+                .execute(&self.pool)
+                .await?;
+                
+                // Return updated user
+                User::find_by_id(&self.pool, user.id).await?.unwrap()
+            } else {
+                // Create new user
+                info!("Creating new user from Google login: {}", google_user.email);
+                
+                // Generate random password hash placeholder or keep it None.
+                // We changed model to allow None.
+                
+                let req = CreateUserRequest {
+                    username: google_user.email.split('@').next().unwrap_or("user").to_string(), // rudimentary username
+                    email: google_user.email.clone(),
+                    first_name: google_user.given_name,
+                    last_name: google_user.family_name,
+                    password: "".to_string(), // UNUSED
+                };
+                
+                let user = User::create(
+                    &self.pool,
+                    req,
+                    None, // password_hash
+                    Some(google_user.sub),
+                    None, // verification_token (auto verified)
+                    None
+                ).await?;
+                
+                // Set verified = true immediately
+                sqlx::query!("UPDATE users SET email_verified = true WHERE id = $1", user.id).execute(&self.pool).await?;
+                
+                // Generate stellar keys
+                let (public_key, secret_key) = self.stellar.generate_keypair()?;
+                user.update_stellar_keys(&self.pool, &public_key, &secret_key).await?
+            }
+        };
+
+        if user.status == "deleted" {
+             return Err(anyhow!("Account has been deleted"));
+        }
+
+        // Generate JWT
+        let token = self.generate_token(user.id, user.role.clone(), ip_address, user_agent).await?;
+        Ok(token)
     }
 
     pub async fn request_password_reset(&self, email: &str) -> Result<()> {

@@ -15,7 +15,7 @@ pub struct User {
     pub first_name: String,
     pub last_name: String,
     #[serde(skip_serializing)]
-    pub password_hash: String,
+    pub password_hash: Option<String>,
     pub stellar_public_key: Option<String>,
     #[serde(skip_serializing)]
     pub stellar_secret_key: Option<String>,
@@ -24,10 +24,12 @@ pub struct User {
     pub updated_at: DateTime<Utc>,
     pub email_verified: bool,
     pub verification_token: Option<String>,
+    pub verification_token_expires: Option<DateTime<Utc>>,
     pub reset_token: Option<String>,
     pub reset_token_expires: Option<DateTime<Utc>>,
     pub status: String, // "active", "deleted", etc.
     pub role: String,
+    pub google_id: Option<String>,
     pub profile_picture_url: Option<String>,
 }
 
@@ -59,29 +61,36 @@ pub struct ResetPasswordRequest {
 
 #[derive(Debug, Deserialize)]
 pub struct VerifyEmailRequest {
-    pub token: String,
+    pub email: String,
+    pub code: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct GoogleLoginRequest {
+    pub id_token: String,
 }
 
 impl User {
     pub async fn create(
         pool: &PgPool,
         user: CreateUserRequest,
-        password_hash: String,
+        password_hash: Option<String>,
+        google_id: Option<String>,
+        verification_token: Option<String>,
+        verification_token_expires: Option<DateTime<Utc>>,
     ) -> Result<Self> {
         let id = Uuid::new_v4();
         let now = Utc::now();
-
-        let verification_token = generate_random_token(32);
 
         let user = sqlx::query_as!(
             User,
             r#"
         INSERT INTO users (
         id, username, email, first_name, last_name, password_hash, 
-        created_at, updated_at, email_verified, verification_token, status, role, profile_picture_url
+        created_at, updated_at, email_verified, verification_token, verification_token_expires, status, role, profile_picture_url, google_id
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
-        RETURNING *
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+        RETURNING id, username, email, first_name, last_name, password_hash, stellar_public_key, stellar_secret_key, stellar_secret_key_encrypted, created_at, updated_at, email_verified, verification_token, verification_token_expires, reset_token, reset_token_expires, status, role, google_id, profile_picture_url
         "#,
             id,
             user.username,
@@ -92,10 +101,12 @@ impl User {
             now,
             now,
             false,
-            Some(verification_token),
+            verification_token,
+            verification_token_expires,
             "active",
             "user",
-            None::<String>
+            None::<String>,
+            google_id
         )
         .fetch_one(pool)
         .await?;
@@ -106,7 +117,7 @@ impl User {
     pub async fn find_by_id(pool: &PgPool, id: Uuid) -> Result<Option<Self>> {
         let user = sqlx::query_as!(
             User,
-            r#"SELECT * FROM users WHERE id = $1 AND status != 'deleted'"#,
+            r#"SELECT id, username, email, first_name, last_name, password_hash, stellar_public_key, stellar_secret_key, stellar_secret_key_encrypted, created_at, updated_at, email_verified, verification_token, verification_token_expires, reset_token, reset_token_expires, status, role, google_id, profile_picture_url FROM users WHERE id = $1 AND status != 'deleted'"#,
             id
         )
         .fetch_optional(pool)
@@ -118,8 +129,20 @@ impl User {
     pub async fn find_by_email(pool: &PgPool, email: &str) -> Result<Option<Self>> {
         let user = sqlx::query_as!(
             User,
-            r#"SELECT * FROM users WHERE email = $1 AND status != 'deleted'"#,
+            r#"SELECT id, username, email, first_name, last_name, password_hash, stellar_public_key, stellar_secret_key, stellar_secret_key_encrypted, created_at, updated_at, email_verified, verification_token, verification_token_expires, reset_token, reset_token_expires, status, role, google_id, profile_picture_url FROM users WHERE email = $1 AND status != 'deleted'"#,
             email
+        )
+        .fetch_optional(pool)
+        .await?;
+
+        Ok(user)
+    }
+
+    pub async fn find_by_google_id(pool: &PgPool, google_id: &str) -> Result<Option<Self>> {
+        let user = sqlx::query_as!(
+            User,
+            r#"SELECT id, username, email, first_name, last_name, password_hash, stellar_public_key, stellar_secret_key, stellar_secret_key_encrypted, created_at, updated_at, email_verified, verification_token, verification_token_expires, reset_token, reset_token_expires, status, role, google_id, profile_picture_url FROM users WHERE google_id = $1 AND status != 'deleted'"#,
+            google_id
         )
         .fetch_optional(pool)
         .await?;
@@ -148,7 +171,7 @@ impl User {
                 stellar_secret_key_encrypted = $2, 
                 updated_at = $3
             WHERE id = $4
-            RETURNING *
+            RETURNING id, username, email, first_name, last_name, password_hash, stellar_public_key, stellar_secret_key, stellar_secret_key_encrypted, created_at, updated_at, email_verified, verification_token, verification_token_expires, reset_token, reset_token_expires, status, role, google_id, profile_picture_url
             "#,
             public_key,
             encrypted_secret,
@@ -161,10 +184,10 @@ impl User {
         Ok(user)
     }
 
-    pub async fn verify_email(pool: &PgPool, token: &str) -> Result<Option<Self>> {
+    pub async fn verify_email(pool: &PgPool, email: &str, code: &str) -> Result<Option<Self>> {
         let now = Utc::now();
 
-        // Find the user with this token and validate ownership + expiry
+        // Find the user with this email and valid code + expiry
         let user = sqlx::query_as!(
             User,
             r#"
@@ -172,16 +195,19 @@ impl User {
             SET 
                 email_verified = true, 
                 verification_token = NULL, 
+                verification_token_expires = NULL,
                 updated_at = $1
-            WHERE verification_token = $2 
+            WHERE email = $2 
+                AND verification_token = $3
+                AND verification_token_expires > $4
                 AND status = 'active'
                 AND email_verified = false
-                AND created_at > $3
-            RETURNING *
+            RETURNING id, username, email, first_name, last_name, password_hash, stellar_public_key, stellar_secret_key, stellar_secret_key_encrypted, created_at, updated_at, email_verified, verification_token, verification_token_expires, reset_token, reset_token_expires, status, role, google_id, profile_picture_url
             "#,
             now,
-            token,
-            now - Duration::hours(24) // for now token expires after 24 hours from user creation
+            email,
+            code,
+            now
         )
         .fetch_optional(pool)
         .await?;
@@ -193,8 +219,8 @@ impl User {
             );
         } else {
             warn!(
-                "❌ Invalid or expired verification token attempted: {}",
-                token
+                "❌ Invalid or expired verification code attempted for email: {}",
+                email
             );
         }
 
@@ -268,7 +294,7 @@ impl User {
             WHERE reset_token = $3 
                 AND reset_token_expires > $4 
                 AND status = 'active'
-            RETURNING *
+            RETURNING id, username, email, first_name, last_name, password_hash, stellar_public_key, stellar_secret_key, stellar_secret_key_encrypted, created_at, updated_at, email_verified, verification_token, verification_token_expires, reset_token, reset_token_expires, status, role, google_id, profile_picture_url
             "#,
             new_password_hash,
             now,
@@ -338,8 +364,8 @@ impl User {
                 id, username, email, first_name, last_name, password_hash, 
                 stellar_public_key, stellar_secret_key, stellar_secret_key_encrypted,
                 created_at, updated_at,
-                email_verified, verification_token,
-                reset_token, reset_token_expires, status, role, profile_picture_url
+                email_verified, verification_token, verification_token_expires,
+                reset_token, reset_token_expires, status, role, google_id, profile_picture_url
             "#,
             format!("deleted_{}@deleted.com", self.id),
             format!("deleted_user_{}", self.id),

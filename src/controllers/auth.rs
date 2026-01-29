@@ -1,7 +1,7 @@
 use crate::middleware::auth::AuthenticatedUser;
 use crate::models::user::{
     CreateUserRequest, LoginRequest, RequestPasswordResetRequest, ResetPasswordRequest,
-    VerifyEmailRequest,
+    VerifyEmailRequest, GoogleLoginRequest,
 };
 use crate::services::auth::AuthService;
 use crate::services::RedisService;
@@ -166,24 +166,17 @@ pub async fn verify_email(
     stellar: web::Data<Arc<StellarService>>,
     redis: Option<web::Data<Arc<RedisService>>>,
     email_service: Option<web::Data<Arc<EmailService>>>,
-    data: web::Query<VerifyEmailRequest>,
+    data: web::Json<VerifyEmailRequest>,
 ) -> impl Responder {
     info!(
-        "📧 Email verification attempt with token: {}...",
-        &data.token[0..10.min(data.token.len())]
+        "📧 Email verification attempt for email: {} with code: {}...",
+        data.email, data.code
     );
 
-    if data.token.trim().is_empty() {
-        warn!("❌ Email verification failed: Empty token provided");
+    if data.code.trim().is_empty() || data.code.len() != 4 {
+        warn!("❌ Email verification failed: Invalid code length");
         return HttpResponse::BadRequest().json(ErrorResponse {
-            message: "Verification token is required.".to_string(),
-        });
-    }
-
-    if data.token.len() < 32 || data.token.len() > 255 {
-        warn!("❌ Email verification failed: Invalid token length");
-        return HttpResponse::BadRequest().json(ErrorResponse {
-            message: "Invalid verification token format.".to_string(),
+            message: "Invalid verification code format.".to_string(),
         });
     }
 
@@ -194,7 +187,7 @@ pub async fn verify_email(
         email_service.as_ref().map(|d| d.get_ref().clone()),
     );
 
-    match auth.verify_email(&data.token).await {
+    match auth.verify_email(&data.email, &data.code).await {
         Ok(user) => {
             info!(
                 "✅ Email verification successful for user: {} ({})",
@@ -216,16 +209,48 @@ pub async fn verify_email(
         Err(e) => {
             error!("Email verification failed: {}", e);
 
-            let error_message = if e.to_string().contains("Invalid verification token") {
-                "Invalid verification token format."
+            let error_message = if e.to_string().contains("Invalid verification code") {
+                "Invalid verification code format."
             } else if e.to_string().contains("expired") {
-                "Verification token has expired. Please request a new verification email."
+                "Verification code has expired. Please request a new verification email."
             } else {
-                "Invalid or expired verification token."
+                "Invalid or expired verification code."
             };
 
             HttpResponse::BadRequest().json(ErrorResponse {
                 message: error_message.to_string(),
+            })
+        }
+    }
+}
+
+pub async fn google_login(
+    pool: web::Data<sqlx::PgPool>,
+    stellar: web::Data<Arc<StellarService>>,
+    redis: Option<web::Data<Arc<RedisService>>>,
+    email_service: Option<web::Data<Arc<EmailService>>>,
+    req: HttpRequest,
+    data: web::Json<GoogleLoginRequest>,
+) -> impl Responder {
+    let ip_address = extract_ip_address(&req);
+    let user_agent = extract_user_agent(&req);
+
+    let auth = AuthService::new_with_services(
+        pool.get_ref().clone(),
+        stellar.get_ref().clone(),
+        redis.as_ref().map(|d| d.get_ref().clone()),
+        email_service.as_ref().map(|d| d.get_ref().clone()),
+    );
+
+    match auth.login_with_google(&data.id_token, ip_address, user_agent).await {
+        Ok(token) => HttpResponse::Ok().json(serde_json::json!({
+            "token": token,
+            "message": "Login successful"
+        })),
+        Err(e) => {
+            error!("Google login failed: {}", e);
+            HttpResponse::Unauthorized().json(ErrorResponse {
+                message: "Authentication failed.".to_string(),
             })
         }
     }
@@ -577,9 +602,10 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
         web::scope("/auth")
             .route("/register", web::post().to(register))
             .route("/login", web::post().to(login))
+            .route("/google", web::post().to(google_login))
             .route("/logout", web::post().to(logout))
             .route("/logout-all", web::post().to(logout_all))
-            .route("/verify-email", web::get().to(verify_email))
+            .route("/verify-email", web::post().to(verify_email))
             .route(
                 "/request-password-reset",
                 web::post().to(request_password_reset),

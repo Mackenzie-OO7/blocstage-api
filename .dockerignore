@@ -1,0 +1,21 @@
+# Build Artifacts
+target/
+**/*.rs.bk
+
+# Git config
+.git/
+.gitignore
+
+# Environment / Secrets
+.env
+Secrets.toml
+Secrets.dev.toml
+backup.tar.gz
+
+# Docker
+Dockerfile
+.dockerignore
+
+# Misc
+README.md
+reset_database.sh

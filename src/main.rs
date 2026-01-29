@@ -1,5 +1,5 @@
 use actix_cors::Cors;
-use actix_web::{web, HttpResponse, Responder};
+use actix_web::{web, App, HttpResponse, HttpServer, Responder};
 use dotenv::dotenv;
 use log::{error, info, warn};
 use serde_json::json;
@@ -81,51 +81,14 @@ async fn not_found() -> impl Responder {
     }))
 }
 
-#[shuttle_runtime::main]
-async fn main(
-    #[shuttle_runtime::Secrets] secrets: shuttle_runtime::SecretStore,
-) -> shuttle_actix_web::ShuttleActixWeb<
-    impl FnOnce(&mut actix_web::web::ServiceConfig) + Send + Clone + 'static,
-> {
-    dotenv().ok();
-
-    for key in [
-        "APP_ENV",
-        "DATABASE_URL",
-        "EMAIL_FROM",
-        "EMAIL_FROM_SUPPORT",
-        "APP_URL",
-        "CORS_ALLOWED_ORIGINS",
-        "JWT_SECRET",
-        "MASTER_ENCRYPTION_KEY",
-        "STELLAR_NETWORK",
-        "PLATFORM_PAYMENT_PUBLIC_KEY",
-        "SPONSORSHIP_FEE_ACCOUNT_PUBLIC",
-        "TESTNET_USDC_ISSUER",
-        "PLATFORM_FEE_PERCENTAGE",
-        "TRANSACTION_SPONSORSHIP_FEE_PERCENTAGE",
-        "GAS_FEE_MARGIN_PERCENTAGE",
-        "SPONSOR_MINIMUM_BALANCE",
-        "SPONSOR_LOW_BALANCE_ALERT_THRESHOLD",
-        "REDIS_URL",
-        "SENDGRID_API_KEY",
-        "SENDGRID_TEMPLATE_EMAIL_VERIFICATION",
-        "SENDGRID_TEMPLATE_PASSWORD_RESET",
-        "SENDGRID_TEMPLATE_WELCOME",
-        "SENDGRID_TEMPLATE_PASSWORD_CHANGED",
-        "SENDGRID_TEMPLATE_ACCOUNT_DELETED",
-        "SENDGRID_TICKET_TEMPLATE_ID",
-        "STORAGE_URL",
-        "SUPABASE_URL",
-        "STORAGE_SERVICE_KEY",
-        "SUPABASE_SERVICE_ROLE_KEY",
-        "STORAGE_BUCKET",
-    ] {
-        if let Some(value) = secrets.get(key) {
-            std::env::set_var(key, value);
-            info!("Set {} from Shuttle secrets", key);
-        }
+#[actix_web::main]
+async fn main() -> std::io::Result<()> {
+    // Initialize logger
+    if std::env::var("RUST_LOG").is_err() {
+        std::env::set_var("RUST_LOG", "info,actix_web=info,sqlx=info");
     }
+    env_logger::init();
+    dotenv().ok();
 
     info!(
         "Starting Blocstage Ticketing Platform API v{}",
@@ -163,22 +126,32 @@ async fn main(
 
     info!("✅ Database pool created with max_connections=20, min_connections=5");
 
-    let redis_service: Option<Arc<RedisService>> = match RedisService::new().await {
-        Ok(redis) => {
-            info!("✅ Redis connection established");
+    let redis_enabled = env::var("REDIS_ENABLED")
+        .unwrap_or_else(|_| "true".to_string())
+        .parse::<bool>()
+        .unwrap_or(true);
 
-            // Test Redis connection
-            match redis.ping().await {
-                Ok(pong) => info!("🏓 Redis ping successful: {}", pong),
-                Err(e) => warn!("⚠️ Redis ping failed: {}", e),
+    let redis_service: Option<Arc<RedisService>> = if !redis_enabled {
+        warn!("⚠️ Redis caching disabled via configuration");
+        None
+    } else {
+        match RedisService::new().await {
+            Ok(redis) => {
+                info!("✅ Redis connection established");
+
+                // Test Redis connection
+                match redis.ping().await {
+                    Ok(pong) => info!("🏓 Redis ping successful: {}", pong),
+                    Err(e) => warn!("⚠️ Redis ping failed: {}", e),
+                }
+
+                Some(Arc::new(redis))
             }
-
-            Some(Arc::new(redis))
-        }
-        Err(e) => {
-            warn!("⚠️ Redis connection failed: {}", e);
-            warn!("🚀 Application will continue without Redis caching");
-            None
+            Err(e) => {
+                warn!("⚠️ Redis connection failed: {}", e);
+                warn!("🚀 Application will continue without Redis caching");
+                None
+            }
         }
     };
 
@@ -202,6 +175,15 @@ async fn main(
         }
     }
 
+    info!("Running database migrations...");
+    match sqlx::migrate!("./migrations").run(&db_pool).await {
+        Ok(_) => info!("Database migrations completed successfully"),
+        Err(e) => {
+            error!("Database migration failed: {}", e);
+            std::process::exit(1);
+        }
+    }
+
     info!("🏦 Initializing sponsor accounts...");
     match initialize_sponsor_system(&db_pool).await {
         Ok(sponsor_count) => {
@@ -213,15 +195,6 @@ async fn main(
         Err(e) => {
             error!("❌ Failed to initialize sponsor system: {}", e);
             error!("💡 Please check your sponsor account configuration");
-            std::process::exit(1);
-        }
-    }
-
-    info!("Running database migrations...");
-    match sqlx::migrate!("./migrations").run(&db_pool).await {
-        Ok(_) => info!("Database migrations completed successfully"),
-        Err(e) => {
-            error!("Database migration failed: {}", e);
             std::process::exit(1);
         }
     }
@@ -239,7 +212,18 @@ async fn main(
     
     info!("🌍 CORS allowed origins: {:?}", origins);
 
-    let config = move |cfg: &mut web::ServiceConfig| {
+    let port = env::var("PORT").unwrap_or_else(|_| "8080".to_string());
+    let address = format!("0.0.0.0:{}", port);
+    
+    info!("🚀 Server starting on {}", address);
+
+    // Create service data outside the closure to be cloned in
+    let db_pool_data = web::Data::new(db_pool.clone());
+    let stellar_service_data = web::Data::new(stellar_service.clone());
+    let redis_service_data = redis_service.map(|r| web::Data::new(r));
+    let email_service_data = email_service.map(|e| web::Data::new(e));
+
+    HttpServer::new(move || {
         let mut cors = Cors::default()
             .allowed_methods(vec!["GET", "POST", "PUT", "DELETE", "OPTIONS"])
             .allowed_headers(vec![
@@ -261,55 +245,55 @@ async fn main(
             cors = cors.allowed_origin(origin);
         }
 
-        // Register shared app data at the root so all scopes/handlers can access it
-        cfg.app_data(web::Data::new(db_pool.clone()));
-        cfg.app_data(web::Data::new(stellar_service.clone()));
-        if let Some(redis) = &redis_service {
-            cfg.app_data(web::Data::new(redis.clone()));
+        let mut app = actix_web::App::new()
+            .wrap(cors)
+            .app_data(db_pool_data.clone())
+            .app_data(stellar_service_data.clone());
+            
+        if let Some(redis) = &redis_service_data {
+            app = app.app_data(redis.clone());
         }
-        if let Some(email) = &email_service {
-            cfg.app_data(web::Data::new(email.clone()));
+        
+        if let Some(email) = &email_service_data {
+            app = app.app_data(email.clone());
         }
 
-        cfg.service(
-            web::scope("")
-                .wrap(cors)
-                .app_data(
-                    web::JsonConfig::default()
-                        .limit(10 * 1024 * 1024)
-                        .error_handler(|err, _req| {
-                            error!("JSON payload error: {}", err);
-                            actix_web::error::InternalError::from_response(
+        app
+            .app_data(
+                web::JsonConfig::default()
+                    .limit(10 * 1024 * 1024)
+                    .error_handler(|err, _req| {
+                        error!("JSON payload error: {}", err);
+                        actix_web::error::InternalError::from_response(
+                        err,
+                        HttpResponse::BadRequest().json(json!({
+                            "message": "Invalid JSON payload"
+                        }))
+                    ).into()
+                    }),
+            )
+            .app_data(
+                web::FormConfig::default()
+                    .limit(5 * 1024 * 1024)
+                    .error_handler(|err, _req| {
+                        error!("Form payload error: {}", err);
+                        actix_web::error::InternalError::from_response(
                             err,
                             HttpResponse::BadRequest().json(json!({
-                                "message": "Invalid JSON payload"
-                            }))
-                        ).into()
-                        }),
-                )
-                .app_data(
-                    web::FormConfig::default()
-                        .limit(5 * 1024 * 1024)
-                        .error_handler(|err, _req| {
-                            error!("Form payload error: {}", err);
-                            actix_web::error::InternalError::from_response(
-                                err,
-                                HttpResponse::BadRequest().json(json!({
-                                    "error": "Invalid form data",
-                                    "message": "Form data is invalid or exceeds size limit"
-                                })),
-                            )
-                            .into()
-                        }),
-                )
-                .route("/health", web::get().to(health_check))
-                .configure(configure_routes)
-                .default_service(web::route().to(not_found))
-        );
-    };
-
-    info!("🚀 Service configuration ready for deployment");
-    Ok(config.into())
+                                "error": "Invalid form data",
+                                "message": "Form data is invalid or exceeds size limit"
+                            })),
+                        )
+                        .into()
+                    }),
+            )
+            .route("/health", web::get().to(health_check))
+            .configure(configure_routes)
+            .default_service(web::route().to(not_found))
+    })
+    .bind(address)?
+    .run()
+    .await
 }
 
 async fn initialize_sponsor_system(

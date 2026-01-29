@@ -3,6 +3,13 @@ FROM rust:1.84-bookworm as builder
 
 WORKDIR /app
 
+# Install build dependencies for OpenSSL
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+    pkg-config \
+    libssl-dev \
+    && rm -rf /var/lib/apt/lists/*
+
 # Copy manifests to build dependencies (for caching)
 COPY Cargo.toml Cargo.lock ./
 

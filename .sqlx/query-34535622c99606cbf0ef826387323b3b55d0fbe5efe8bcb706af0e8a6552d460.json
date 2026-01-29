@@ -1,0 +1,136 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id, username, email, first_name, last_name, password_hash, stellar_public_key, stellar_secret_key, stellar_secret_key_encrypted, created_at, updated_at, email_verified, verification_token, verification_token_expires, reset_token, reset_token_expires, status, role, google_id, profile_picture_url FROM users WHERE google_id = $1 AND status != 'deleted'",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "username",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 2,
+        "name": "email",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 3,
+        "name": "first_name",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 4,
+        "name": "last_name",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 5,
+        "name": "password_hash",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 6,
+        "name": "stellar_public_key",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 7,
+        "name": "stellar_secret_key",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 8,
+        "name": "stellar_secret_key_encrypted",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 9,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 10,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 11,
+        "name": "email_verified",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 12,
+        "name": "verification_token",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 13,
+        "name": "verification_token_expires",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 14,
+        "name": "reset_token",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 15,
+        "name": "reset_token_expires",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 16,
+        "name": "status",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 17,
+        "name": "role",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 18,
+        "name": "google_id",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 19,
+        "name": "profile_picture_url",
+        "type_info": "Varchar"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+      true,
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+      true,
+      false,
+      false,
+      true,
+      true
+    ]
+  },
+  "hash": "34535622c99606cbf0ef826387323b3b55d0fbe5efe8bcb706af0e8a6552d460"
+}

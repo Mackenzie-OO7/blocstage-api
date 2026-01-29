@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n            UPDATE users\n            SET \n                status = 'deleted',\n                email = $1, \n                username = $2, \n                updated_at = $3\n            WHERE id = $4\n            RETURNING \n                id, username, email, first_name, last_name, password_hash, \n                stellar_public_key, stellar_secret_key, stellar_secret_key_encrypted,\n                created_at, updated_at,\n                email_verified, verification_token,\n                reset_token, reset_token_expires, status, role, profile_picture_url\n            ",
+  "query": "\n        INSERT INTO users (\n        id, username, email, first_name, last_name, password_hash, \n        created_at, updated_at, email_verified, verification_token, verification_token_expires, status, role, profile_picture_url, google_id\n        )\n        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)\n        RETURNING id, username, email, first_name, last_name, password_hash, stellar_public_key, stellar_secret_key, stellar_secret_key_encrypted, created_at, updated_at, email_verified, verification_token, verification_token_expires, reset_token, reset_token_expires, status, role, google_id, profile_picture_url\n        ",
   "describe": {
     "columns": [
       {
@@ -70,36 +70,57 @@
       },
       {
         "ordinal": 13,
+        "name": "verification_token_expires",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 14,
         "name": "reset_token",
         "type_info": "Varchar"
       },
       {
-        "ordinal": 14,
+        "ordinal": 15,
         "name": "reset_token_expires",
         "type_info": "Timestamptz"
       },
       {
-        "ordinal": 15,
+        "ordinal": 16,
         "name": "status",
         "type_info": "Varchar"
       },
       {
-        "ordinal": 16,
+        "ordinal": 17,
         "name": "role",
         "type_info": "Varchar"
       },
       {
-        "ordinal": 17,
+        "ordinal": 18,
+        "name": "google_id",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 19,
         "name": "profile_picture_url",
         "type_info": "Varchar"
       }
     ],
     "parameters": {
       "Left": [
+        "Uuid",
+        "Varchar",
+        "Varchar",
+        "Varchar",
         "Varchar",
         "Varchar",
         "Timestamptz",
-        "Uuid"
+        "Timestamptz",
+        "Bool",
+        "Varchar",
+        "Timestamptz",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar"
       ]
     },
     "nullable": [
@@ -108,20 +129,22 @@
       false,
       false,
       false,
-      false,
       true,
-      true,
-      true,
-      false,
-      false,
-      false,
       true,
       true,
       true,
       false,
       false,
+      false,
+      true,
+      true,
+      true,
+      true,
+      false,
+      false,
+      true,
       true
     ]
   },
-  "hash": "8c613e531d7ff073fe7b1b0a542a730415e6d4540dcb2f9ed0017ef43b6d121c"
+  "hash": "3c4f91dc15b4cebeaf80884ce5475800658a5ab3deacc2b79f68598a9618d3af"
 }

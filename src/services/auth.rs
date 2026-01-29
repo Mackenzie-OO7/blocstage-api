@@ -311,6 +311,8 @@ impl AuthService {
     pub async fn login_with_google(&self, id_token: &str, ip_address: Option<String>, user_agent: Option<String>) -> Result<String> {
         let google_user = self.verify_google_token(id_token).await?;
         info!("Google login for: {}", google_user.email);
+        
+        let mut rng = rand::thread_rng();
 
         // Check if user exists by google_id
         let user_opt = User::find_by_google_id(&self.pool, &google_user.sub).await?;
@@ -337,11 +339,18 @@ impl AuthService {
                 // Create new user
                 info!("Creating new user from Google login: {}", google_user.email);
                 
-                // Generate random password hash placeholder or keep it None.
-                // We changed model to allow None.
+                // Generate username from given_name + random 4-digit suffix
+                let base_name = google_user.given_name
+                    .chars()
+                    .filter(|c| c.is_alphanumeric())
+                    .collect::<String>()
+                    .to_lowercase();
+                let base_name = if base_name.is_empty() { "user".to_string() } else { base_name };
+                let suffix: u32 = rng.gen_range(1000..9999);
+                let username = format!("{}_{}", base_name, suffix);
                 
                 let req = CreateUserRequest {
-                    username: google_user.email.split('@').next().unwrap_or("user").to_string(), // rudimentary username
+                    username,
                     email: google_user.email.clone(),
                     first_name: google_user.given_name,
                     last_name: google_user.family_name,

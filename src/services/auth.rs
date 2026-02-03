@@ -25,9 +25,10 @@ pub struct Claims {
 pub struct GoogleUser {
     pub sub: String,
     pub email: String,
-    pub given_name: String,
-    pub family_name: String,
+    pub given_name: Option<String>,
+    pub family_name: Option<String>,
     pub picture: Option<String>,
+    pub name: Option<String>,  // Full name as fallback
 }
 
 pub struct AuthService {
@@ -339,8 +340,30 @@ impl AuthService {
                 // Create new user
                 info!("Creating new user from Google login: {}", google_user.email);
                 
-                // Generate username from given_name + random 4-digit suffix
-                let base_name = google_user.given_name
+                // Extract first and last name with fallbacks
+                let (first_name, last_name) = match (&google_user.given_name, &google_user.family_name) {
+                    (Some(first), Some(last)) => (first.clone(), last.clone()),
+                    (Some(first), None) => (first.clone(), String::new()),
+                    (None, Some(last)) => (String::new(), last.clone()),
+                    (None, None) => {
+                        // Try to extract from full name or email
+                        if let Some(name) = &google_user.name {
+                            let parts: Vec<&str> = name.split_whitespace().collect();
+                            if parts.len() >= 2 {
+                                (parts[0].to_string(), parts[1..].join(" "))
+                            } else {
+                                (name.clone(), String::new())
+                            }
+                        } else {
+                            // Fallback to email prefix
+                            let email_prefix = google_user.email.split('@').next().unwrap_or("user");
+                            (email_prefix.to_string(), String::new())
+                        }
+                    }
+                };
+                
+                // Generate username from first_name + random 4-digit suffix
+                let base_name = first_name
                     .chars()
                     .filter(|c| c.is_alphanumeric())
                     .collect::<String>()
@@ -352,8 +375,8 @@ impl AuthService {
                 let req = CreateUserRequest {
                     username,
                     email: google_user.email.clone(),
-                    first_name: google_user.given_name,
-                    last_name: google_user.family_name,
+                    first_name,
+                    last_name,
                     password: "".to_string(), // UNUSED
                 };
                 

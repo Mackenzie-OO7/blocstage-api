@@ -25,9 +25,10 @@ pub struct Claims {
 pub struct GoogleUser {
     pub sub: String,
     pub email: String,
-    pub given_name: String,
-    pub family_name: String,
+    pub given_name: Option<String>,
+    pub family_name: Option<String>,
     pub picture: Option<String>,
+    pub name: Option<String>,  // Full name as fallback
 }
 
 pub struct AuthService {
@@ -311,6 +312,8 @@ impl AuthService {
     pub async fn login_with_google(&self, id_token: &str, ip_address: Option<String>, user_agent: Option<String>) -> Result<String> {
         let google_user = self.verify_google_token(id_token).await?;
         info!("Google login for: {}", google_user.email);
+        
+        let mut rng = rand::thread_rng();
 
         // Check if user exists by google_id
         let user_opt = User::find_by_google_id(&self.pool, &google_user.sub).await?;
@@ -337,14 +340,43 @@ impl AuthService {
                 // Create new user
                 info!("Creating new user from Google login: {}", google_user.email);
                 
-                // Generate random password hash placeholder or keep it None.
-                // We changed model to allow None.
+                // Extract first and last name with fallbacks
+                let (first_name, last_name) = match (&google_user.given_name, &google_user.family_name) {
+                    (Some(first), Some(last)) => (first.clone(), last.clone()),
+                    (Some(first), None) => (first.clone(), String::new()),
+                    (None, Some(last)) => (String::new(), last.clone()),
+                    (None, None) => {
+                        // Try to extract from full name or email
+                        if let Some(name) = &google_user.name {
+                            let parts: Vec<&str> = name.split_whitespace().collect();
+                            if parts.len() >= 2 {
+                                (parts[0].to_string(), parts[1..].join(" "))
+                            } else {
+                                (name.clone(), String::new())
+                            }
+                        } else {
+                            // Fallback to email prefix
+                            let email_prefix = google_user.email.split('@').next().unwrap_or("user");
+                            (email_prefix.to_string(), String::new())
+                        }
+                    }
+                };
+                
+                // Generate username from first_name + random 4-digit suffix
+                let base_name = first_name
+                    .chars()
+                    .filter(|c| c.is_alphanumeric())
+                    .collect::<String>()
+                    .to_lowercase();
+                let base_name = if base_name.is_empty() { "user".to_string() } else { base_name };
+                let suffix: u32 = rng.gen_range(1000..9999);
+                let username = format!("{}_{}", base_name, suffix);
                 
                 let req = CreateUserRequest {
-                    username: google_user.email.split('@').next().unwrap_or("user").to_string(), // rudimentary username
+                    username,
                     email: google_user.email.clone(),
-                    first_name: google_user.given_name,
-                    last_name: google_user.family_name,
+                    first_name,
+                    last_name,
                     password: "".to_string(), // UNUSED
                 };
                 
